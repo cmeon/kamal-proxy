@@ -110,6 +110,7 @@ func (m *DOCertManager) genCert() (*tls.Certificate, error) {
 	certs, err := client.Certificate.Obtain(req)
 	if err != nil {
 		slog.Error("Failed DNS-01 Challenge", "error", err)
+		return nil, err
 	}
 
 	tlsCert, err := tls.X509KeyPair(certs.Certificate, certs.PrivateKey)
