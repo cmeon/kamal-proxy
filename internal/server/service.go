@@ -19,6 +19,7 @@ import (
 	"golang.org/x/crypto/acme/autocert"
 
 	"github.com/basecamp/kamal-proxy/internal/metrics"
+	certdns01 "github.com/basecamp/kamal-proxy/internal/server/cert_dns01"
 )
 
 const (
@@ -83,6 +84,7 @@ type ServiceOptions struct {
 	TLSEnabled                  bool          `json:"tls_enabled"`
 	TLSCertificatePath          string        `json:"tls_certificate_path"`
 	TLSPrivateKeyPath           string        `json:"tls_private_key_path"`
+	TLSProvider                 string        `json:"tls_provider"`
 	TLSRedirect                 bool          `json:"tls_redirect"`
 	CanonicalHost               string        `json:"canonical_host"`
 	ACMEDirectory               string        `json:"acme_directory"`
@@ -376,28 +378,38 @@ func (s *Service) servesRootPath() bool {
 }
 
 func (s *Service) createCertManager(options ServiceOptions) (CertManager, error) {
-	if !options.TLSEnabled {
+	switch {
+	case !options.TLSEnabled:
 		return nil, nil
-	}
 
-	if options.TLSCertificatePath != "" && options.TLSPrivateKeyPath != "" {
+	case options.TLSCertificatePath != "" && options.TLSPrivateKeyPath != "":
 		return NewStaticCertManager(options.TLSCertificatePath, options.TLSPrivateKeyPath)
-	}
 
-	// Ensure we're not trying to use Let's Encrypt to fetch a wildcard domain,
-	// as that is not supported with the challenge types that we use.
-	for _, host := range options.Hosts {
-		if strings.Contains(host, "*") {
-			return nil, ErrorAutomaticTLSDoesNotSupportWildcards
+	case options.TLSProvider == "digitalocean":
+		primaryDomain := options.Hosts[0]
+		email := os.Getenv("ACME_EMAIL")
+		if email == "" {
+			return nil, errors.New("ACME_EMAIL environment variable is required for DNS-01 challenges")
 		}
-	}
 
-	return &autocert.Manager{
-		Prompt:     autocert.AcceptTOS,
-		Cache:      autocert.DirCache(options.ScopedCachePath()),
-		HostPolicy: autocert.HostWhitelist(options.Hosts...),
-		Client:     &acme.Client{DirectoryURL: options.ACMEDirectory},
-	}, nil
+		return certdns01.NewDODNS01CertManager(primaryDomain, "email"), nil
+
+	default:
+		// Ensure we're not trying to use Let's Encrypt to fetch a wildcard domain,
+		// as that is not supported with the challenge types that we use.
+		for _, host := range options.Hosts {
+			if strings.Contains(host, "*") {
+				return nil, ErrorAutomaticTLSDoesNotSupportWildcards
+			}
+		}
+
+		return &autocert.Manager{
+			Prompt:     autocert.AcceptTOS,
+			Cache:      autocert.DirCache(options.ScopedCachePath()),
+			HostPolicy: autocert.HostWhitelist(options.Hosts...),
+			Client:     &acme.Client{DirectoryURL: options.ACMEDirectory},
+		}, nil
+	}
 }
 
 func (s *Service) createMiddleware(options ServiceOptions, certManager CertManager) (http.Handler, error) {
