@@ -385,14 +385,14 @@ func (s *Service) createCertManager(options ServiceOptions) (CertManager, error)
 	case options.TLSCertificatePath != "" && options.TLSPrivateKeyPath != "":
 		return NewStaticCertManager(options.TLSCertificatePath, options.TLSPrivateKeyPath)
 
-	case options.TLSProvider == "digitalocean":
-		primaryDomain := options.Hosts[0]
+	case os.Getenv("TLS_PROVIDER") == "digitalocean":
+		domain := options.Hosts[0]
 		email := os.Getenv("ACME_EMAIL")
 		if email == "" {
 			return nil, errors.New("ACME_EMAIL environment variable is required for DNS-01 challenges")
 		}
 
-		return certdns01.NewDODNS01CertManager(primaryDomain, "email"), nil
+		return certdns01.NewDODNS01CertManager(domain, email), nil
 
 	default:
 		// Ensure we're not trying to use Let's Encrypt to fetch a wildcard domain,
