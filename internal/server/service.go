@@ -392,7 +392,9 @@ func (s *Service) createCertManager(options ServiceOptions) (CertManager, error)
 			return nil, errors.New("ACME_EMAIL environment variable is required for DNS-01 challenges")
 		}
 
-		return certdns01.NewDODNS01CertManager(domain, email), nil
+		cacheDir := options.ScopedCachePath()
+
+		return certdns01.NewDODNS01CertManager(domain, email, cacheDir), nil
 
 	default:
 		// Ensure we're not trying to use Let's Encrypt to fetch a wildcard domain,

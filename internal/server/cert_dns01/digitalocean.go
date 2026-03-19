@@ -6,6 +6,8 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/tls"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"log/slog"
@@ -22,16 +24,18 @@ import (
 )
 
 type DOCertManager struct {
-	domain string
-	email  string
-	cert   *tls.Certificate
-	mu     sync.RWMutex
+	domain  string
+	email   string
+	cert    *tls.Certificate
+	certDir string
+	mu      sync.RWMutex
 }
 
-func NewDODNS01CertManager(domain, email string) *DOCertManager {
+func NewDODNS01CertManager(domain, email, certDir string) *DOCertManager {
 	return &DOCertManager{
-		domain: strings.TrimPrefix(domain, "*."),
-		email:  email,
+		domain:  strings.TrimPrefix(domain, "*."),
+		email:   email,
+		certDir: certDir,
 	}
 }
 
@@ -42,12 +46,23 @@ func (m *DOCertManager) HTTPHandler(handler http.Handler) http.Handler {
 
 // GetCertificate implements [server.CertManager].
 func (m *DOCertManager) GetCertificate(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
-	cert := m.getCert()
-	if cert != nil {
+	if cert := m.getCert(); cert != nil {
 		return cert, nil
 	}
 
-	return m.genCert()
+	certFile := filepath.Join(m.certDir, m.domain+".crt")
+	keyFile := filepath.Join(m.certDir, m.domain+".key")
+
+	tlsCert, err := tls.LoadX509KeyPair(certFile, keyFile)
+	if err == nil {
+		slog.Info("Loaded certificate from disk cache", "domain", m.domain)
+		m.mu.Lock()
+		m.cert = &tlsCert
+		m.mu.Unlock()
+		return m.cert, nil
+	}
+
+	return m.genCert(certFile, keyFile)
 }
 
 func (m *DOCertManager) getCert() *tls.Certificate {
@@ -56,7 +71,7 @@ func (m *DOCertManager) getCert() *tls.Certificate {
 	return m.cert
 }
 
-func (m *DOCertManager) genCert() (*tls.Certificate, error) {
+func (m *DOCertManager) genCert(certFile, keyFile string) (*tls.Certificate, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -111,6 +126,14 @@ func (m *DOCertManager) genCert() (*tls.Certificate, error) {
 	if err != nil {
 		slog.Error("Failed DNS-01 Challenge", "error", err)
 		return nil, err
+	}
+
+	if err := os.MkdirAll(m.certDir, 0755); err != nil {
+		slog.Error("Failed to create cert directory", "error", err)
+	} else {
+		os.WriteFile(certFile, certs.Certificate, 0644)
+		os.WriteFile(keyFile, certs.PrivateKey, 0600)
+		slog.Info("Saved certificate to disk cache", "domain", m.domain)
 	}
 
 	tlsCert, err := tls.X509KeyPair(certs.Certificate, certs.PrivateKey)
